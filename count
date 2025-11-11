@@ -1,0 +1,290 @@
+import argparse
+import glob
+import os
+from datetime import datetime
+from typing import List, Optional, Tuple
+
+import pandas as pd
+from openpyxl import load_workbook
+
+
+def list_csv_files(folder: str) -> List[str]:
+    pattern = os.path.join(folder, "*.csv")
+    return sorted(glob.glob(pattern))
+
+
+def read_and_concat_csvs(csv_files: List[str]) -> pd.DataFrame:
+    if not csv_files:
+        return pd.DataFrame()
+    frames: List[pd.DataFrame] = []
+    for path in csv_files:
+        try:
+            # Read as strings to preserve leading zeros and avoid unintended type inference
+            df = pd.read_csv(
+                path,
+                dtype=str,
+                na_filter=True,  # detect NaNs
+                encoding="utf-8-sig",  # handle BOM if present
+                keep_default_na=True,
+                on_bad_lines="skip",
+            )
+        except TypeError:
+            # Fallback for older pandas without on_bad_lines
+            df = pd.read_csv(
+                path,
+                dtype=str,
+                na_filter=True,
+                encoding="utf-8-sig",
+                keep_default_na=True,
+                error_bad_lines=False,  # type: ignore
+            )
+        frames.append(df)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True, copy=False)
+
+
+def normalize_id_series(series: pd.Series) -> pd.Series:
+    # Ensure string type, strip whitespace, convert empty strings to NaN
+    series = series.astype(str).str.strip()
+    series = series.replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA})
+    return series
+
+
+def count_non_null(series: pd.Series) -> int:
+    return int(series.dropna().shape[0])
+
+
+def compute_counts(
+    source_df: pd.DataFrame,
+    success_df: pd.DataFrame,
+    source_id_col: str,
+    success_id_col: str,
+) -> Tuple[int, int, pd.Series, pd.Series]:
+    if source_id_col not in source_df.columns:
+        raise ValueError(
+            f"Source ID column '{source_id_col}' not found. Available columns: {list(source_df.columns)}"
+        )
+    if success_id_col not in success_df.columns:
+        raise ValueError(
+            f"Success ID column '{success_id_col}' not found. Available columns: {list(success_df.columns)}"
+        )
+    src_ids = normalize_id_series(source_df[source_id_col])
+    suc_ids = normalize_id_series(success_df[success_id_col])
+    return count_non_null(src_ids), count_non_null(suc_ids), src_ids, suc_ids
+
+
+def append_summary_row(
+    summary_path: str,
+    label: str,
+    source_count: int,
+    success_count: int,
+    success_id_col: str,
+) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_row = pd.DataFrame(
+        [
+            {
+                "Folder": label,
+                "Digital Source": source_count,
+                "Merge UAT Success": success_count,
+                "Success_Id_Column": success_id_col,
+                "RunTimestamp": timestamp,
+            }
+        ]
+    )
+
+    summary_sheet = "Summary"
+    if os.path.exists(summary_path):
+        try:
+            existing = pd.read_excel(summary_path, sheet_name=summary_sheet, dtype=str)
+        except ValueError:
+            # Summary sheet does not exist in workbook
+            existing = pd.DataFrame()
+        combined = pd.concat([existing, new_row], ignore_index=True) if not existing.empty else new_row
+        with pd.ExcelWriter(
+            summary_path, engine="openpyxl", mode="a", if_sheet_exists="overlay"
+        ) as writer:
+            # Replace only the Summary sheet to preserve other sheets
+            # Some pandas versions require 'replace' instead of overlay behavior
+            try:
+                combined.to_excel(writer, sheet_name=summary_sheet, index=False)
+            except Exception:
+                # If overlay didn't work as expected, reopen and replace the sheet
+                writer.book = load_workbook(summary_path)
+                if summary_sheet in writer.book.sheetnames:
+                    del writer.book[summary_sheet]
+                writer.book.create_sheet(summary_sheet)
+                writer.sheets = {ws.title: ws for ws in writer.book.worksheets}
+                combined.to_excel(writer, sheet_name=summary_sheet, index=False)
+    else:
+        with pd.ExcelWriter(summary_path, engine="openpyxl") as writer:
+            new_row.to_excel(writer, sheet_name=summary_sheet, index=False)
+
+
+def write_mismatch_sheets(
+    summary_path: str,
+    label: str,
+    source_df: pd.DataFrame,
+    success_df: pd.DataFrame,
+    source_ids: pd.Series,
+    success_ids: pd.Series,
+    source_id_col: str,
+    success_id_col: str,
+) -> None:
+    # Identify set differences on non-null IDs
+    src_set = set(source_ids.dropna().tolist())
+    suc_set = set(success_ids.dropna().tolist())
+    missing_in_success = sorted(src_set - suc_set)
+    missing_in_source = sorted(suc_set - src_set)
+
+    timestamp_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sheet_src_missing = f"{label}_MissingInSuccess_{timestamp_tag}"
+    sheet_suc_missing = f"{label}_MissingInSource_{timestamp_tag}"
+
+    # Filter original frames to the mismatched rows for full context
+    src_missing_df = (
+        source_df[source_df[source_id_col].astype(str).str.strip().isin(missing_in_success)]
+        if missing_in_success
+        else pd.DataFrame(columns=source_df.columns)
+    )
+    suc_missing_df = (
+        success_df[success_df[success_id_col].astype(str).str.strip().isin(missing_in_source)]
+        if missing_in_source
+        else pd.DataFrame(columns=success_df.columns)
+    )
+
+    if not os.path.exists(summary_path):
+        # Create workbook if it doesn't exist
+        with pd.ExcelWriter(summary_path, engine="openpyxl") as writer:
+            src_missing_df.to_excel(writer, sheet_name=sheet_src_missing, index=False)
+            suc_missing_df.to_excel(writer, sheet_name=sheet_suc_missing, index=False)
+        return
+
+    # Append new sheets without disturbing existing ones
+    with pd.ExcelWriter(summary_path, engine="openpyxl", mode="a", if_sheet_exists="new") as writer:
+        # Some pandas versions don't support if_sheet_exists="new"; fallback handled by try/except
+        try:
+            src_missing_df.to_excel(writer, sheet_name=sheet_src_missing, index=False)
+            suc_missing_df.to_excel(writer, sheet_name=sheet_suc_missing, index=False)
+        except Exception:
+            writer.book = load_workbook(summary_path)
+            # Ensure unique sheet names if collision occurs
+            base_src = sheet_src_missing
+            base_suc = sheet_suc_missing
+            counter = 1
+            while sheet_src_missing in writer.book.sheetnames:
+                sheet_src_missing = f"{base_src}_{counter}"
+                counter += 1
+            counter = 1
+            while sheet_suc_missing in writer.book.sheetnames:
+                sheet_suc_missing = f"{base_suc}_{counter}"
+                counter += 1
+            writer.sheets = {ws.title: ws for ws in writer.book.worksheets}
+            src_missing_df.to_excel(writer, sheet_name=sheet_src_missing, index=False)
+            suc_missing_df.to_excel(writer, sheet_name=sheet_suc_missing, index=False)
+
+
+def infer_default_label(source_folder: str, success_folder: str, folder_label: Optional[str]) -> str:
+    if folder_label:
+        return folder_label
+    src_name = os.path.basename(os.path.normpath(source_folder)) or source_folder
+    suc_name = os.path.basename(os.path.normpath(success_folder)) or success_folder
+    return f"{src_name} vs {suc_name}"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compare source vs success CSV folders, append counts to Summary.xlsx, and write mismatch sheets on count differences."
+    )
+    parser.add_argument(
+        "--source-folder",
+        required=False,
+        default=r"C:\Users\Sourav.Sindhikar\Downloads\Audit\UAT-DigitalSource\talkdesk__TDActivityCaseRelation",
+        help="Path to folder containing source CSV file(s).",
+    )
+    parser.add_argument(
+        "--success-folder",
+        required=False,
+        default=r"C:\Users\Sourav.Sindhikar\Downloads\Audit\MergeUAT-Success\talkdesk__TDActivityCaseRelation",
+        help="Path to folder containing success CSV file(s).",
+    )
+    parser.add_argument(
+        "--success-id-col",
+        required=False,
+        default="Legacy_SF_Record_ID__c",
+        help="ID column name in success files (default: Legacy_SF_Record_ID__c).",
+    )
+    parser.add_argument("--source-id-col", default="Id", help="ID column name in source files (default: Id).")
+    parser.add_argument(
+        "--folder-label",
+        default="talkdesk__TDActivityCaseRelation",
+        help="Label to display in the Summary sheet (default: '<source_folder> vs <success_folder>').",
+    )
+    parser.add_argument(
+        "--summary-path",
+        default=r"C:\Users\Sourav.Sindhikar\Downloads\Audit\Summary\Summary.xlsx",
+        help="Output Excel workbook path for summary and mismatch details.",
+    )
+    args = parser.parse_args()
+
+    source_folder = args.source_folder
+    success_folder = args.success_folder
+    success_id_col = args.success_id_col
+    source_id_col = args.source_id_col
+    summary_path = args.summary_path
+    label = infer_default_label(source_folder, success_folder, args.folder_label)
+
+    # Locate files
+    source_csvs = list_csv_files(source_folder)
+    success_csvs = list_csv_files(success_folder)
+    if not source_csvs:
+        raise FileNotFoundError(f"No CSV files found in source folder: {source_folder}")
+    if not success_csvs:
+        raise FileNotFoundError(f"No CSV files found in success folder: {success_folder}")
+
+    # Read
+    src_df = read_and_concat_csvs(source_csvs)
+    suc_df = read_and_concat_csvs(success_csvs)
+    if src_df.empty:
+        raise ValueError(f"Source data is empty after reading CSVs from: {source_folder}")
+    if suc_df.empty:
+        raise ValueError(f"Success data is empty after reading CSVs from: {success_folder}")
+
+    # Compute counts
+    source_count, success_count, src_ids, suc_ids = compute_counts(
+        src_df, suc_df, source_id_col=source_id_col, success_id_col=success_id_col
+    )
+
+    # Write summary
+    append_summary_row(
+        summary_path=summary_path,
+        label=label,
+        source_count=source_count,
+        success_count=success_count,
+        success_id_col=success_id_col,
+    )
+
+    # On mismatch, add sheets with mismatched data
+    if source_count != success_count:
+        write_mismatch_sheets(
+            summary_path=summary_path,
+            label=label,
+            source_df=src_df,
+            success_df=suc_df,
+            source_ids=src_ids,
+            success_ids=suc_ids,
+            source_id_col=source_id_col,
+            success_id_col=success_id_col,
+        )
+
+    print(
+        f"Done. {label} -> Digital Source: {source_count}, Merge UAT Success: {success_count}. "
+        f"Summary written to: {summary_path}"
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+
