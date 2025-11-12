@@ -1,0 +1,56 @@
+import csv
+import os
+from typing import Set
+
+
+PROD_CSV = r"C:\Users\Sourav.Sindhikar\Downloads\User comparison\All User from prod-11_12_2025.csv"
+MERGE_UAT_CSV = r"C:\Users\Sourav.Sindhikar\Downloads\User comparison\All User from mergeUAT-11_12_2025.csv"
+OUTPUT_CSV = "missing_in_uat.csv"
+
+
+def normalize_email(value: str) -> str:
+    email = value.strip()
+    if email.lower().endswith(".invalid"):
+        email = email[: -len(".invalid")]
+    return email
+
+
+def read_emails(path: str, *, strip_invalid_suffix: bool = False) -> Set[str]:
+    emails: Set[str] = set()
+    with open(path, newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        if "Email" not in reader.fieldnames:
+            raise ValueError(f'"Email" column not found in {path}')
+        for row in reader:
+            raw = row.get("Email", "")
+            if raw is None:
+                continue
+            email = normalize_email(raw) if strip_invalid_suffix else raw.strip()
+            if email:
+                emails.add(email.lower())
+    return emails
+
+
+def main() -> None:
+    if not os.path.exists(PROD_CSV):
+        raise FileNotFoundError(f"Prod CSV not found at {PROD_CSV}")
+    if not os.path.exists(MERGE_UAT_CSV):
+        raise FileNotFoundError(f"Merge UAT CSV not found at {MERGE_UAT_CSV}")
+
+    prod_emails = read_emails(PROD_CSV)
+    merge_uat_emails = read_emails(MERGE_UAT_CSV, strip_invalid_suffix=True)
+
+    missing_emails = sorted(prod_emails - merge_uat_emails)
+
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Email"])
+        for email in missing_emails:
+            writer.writerow([email])
+
+    print(f"Wrote {len(missing_emails)} email(s) missing in merge UAT to {OUTPUT_CSV}")
+
+
+if __name__ == "__main__":
+    main()
+
