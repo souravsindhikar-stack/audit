@@ -1,12 +1,15 @@
 import csv
 import os
-from typing import Set
+from typing import Iterable, List, Optional, Tuple
 
 
 PROD_CSV = r"C:\Users\Sourav.Sindhikar\Downloads\User comparison\All User from prod-11_12_2025.csv"
 MERGE_UAT_CSV = r"C:\Users\Sourav.Sindhikar\Downloads\User comparison\All User from mergeUAT-11_12_2025.csv"
 MISSING_IN_UAT_CSV = "missing_in_uat.csv"
 MISSING_IN_PROD_CSV = "missing_in_prod.csv"
+
+
+Row = Tuple[str, dict]
 
 
 def normalize_email(value: str) -> str:
@@ -16,20 +19,28 @@ def normalize_email(value: str) -> str:
     return email
 
 
-def read_emails(path: str, *, strip_invalid_suffix: bool = False) -> Set[str]:
-    emails: Set[str] = set()
+def clean_row(row: dict) -> dict:
+    return {key: value.strip() if isinstance(value, str) else value for key, value in row.items()}
+
+
+def load_dataset(path: str, *, strip_invalid_suffix: bool = False) -> Tuple[List[str], List[Row]]:
+    rows: List[Row] = []
     with open(path, newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
-        if "Email" not in reader.fieldnames:
+        if reader.fieldnames is None or "Email" not in reader.fieldnames:
             raise ValueError(f'"Email" column not found in {path}')
+        headers = list(reader.fieldnames)
         for row in reader:
-            raw = row.get("Email", "")
+            raw = row.get("Email")
             if raw is None:
                 continue
-            email = normalize_email(raw) if strip_invalid_suffix else raw.strip()
-            if email:
-                emails.add(email.lower())
-    return emails
+            normalized_email = normalize_email(raw) if strip_invalid_suffix else raw.strip()
+            if not normalized_email:
+                continue
+            cleaned = clean_row(row)
+            cleaned["Email"] = normalized_email
+            rows.append((normalized_email.lower(), cleaned))
+    return headers, rows
 
 
 def main() -> None:
@@ -38,30 +49,31 @@ def main() -> None:
     if not os.path.exists(MERGE_UAT_CSV):
         raise FileNotFoundError(f"Merge UAT CSV not found at {MERGE_UAT_CSV}")
 
-    prod_emails = read_emails(PROD_CSV)
-    merge_uat_emails = read_emails(MERGE_UAT_CSV, strip_invalid_suffix=True)
+    prod_headers, prod_rows = load_dataset(PROD_CSV)
+    merge_headers, merge_rows = load_dataset(MERGE_UAT_CSV, strip_invalid_suffix=True)
 
-    missing_in_uat = sorted(prod_emails - merge_uat_emails)
-    missing_in_prod = sorted(merge_uat_emails - prod_emails)
+    prod_email_keys = {email for email, _ in prod_rows}
+    merge_email_keys = {email for email, _ in merge_rows}
 
-    with open(MISSING_IN_UAT_CSV, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["Email"])
-        for email in missing_in_uat:
-            writer.writerow([email])
+    missing_in_uat_rows = [row for email, row in prod_rows if email not in merge_email_keys]
+    missing_in_prod_rows = [row for email, row in merge_rows if email not in prod_email_keys]
 
-    with open(MISSING_IN_PROD_CSV, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["Email"])
-        for email in missing_in_prod:
-            writer.writerow([email])
+    write_rows(MISSING_IN_UAT_CSV, prod_headers, missing_in_uat_rows)
+    write_rows(MISSING_IN_PROD_CSV, merge_headers, missing_in_prod_rows)
 
     print(
-        f"Wrote {len(missing_in_uat)} email(s) missing in merge UAT to {MISSING_IN_UAT_CSV}"
+        f"Wrote {len(missing_in_uat_rows)} record(s) missing in merge UAT to {MISSING_IN_UAT_CSV}"
     )
     print(
-        f"Wrote {len(missing_in_prod)} email(s) missing in prod to {MISSING_IN_PROD_CSV}"
+        f"Wrote {len(missing_in_prod_rows)} record(s) missing in prod to {MISSING_IN_PROD_CSV}"
     )
+
+def write_rows(path: str, headers: Optional[Iterable[str]], rows: List[dict]) -> None:
+    fieldnames = list(headers) if headers else sorted({key for row in rows for key in row.keys()})
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 if __name__ == "__main__":
