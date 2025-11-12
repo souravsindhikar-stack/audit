@@ -5,7 +5,8 @@ from typing import Set
 
 PROD_CSV = r"C:\Users\Sourav.Sindhikar\Downloads\User comparison\All User from prod-11_12_2025.csv"
 MERGE_UAT_CSV = r"C:\Users\Sourav.Sindhikar\Downloads\User comparison\All User from mergeUAT-11_12_2025.csv"
-OUTPUT_CSV = "missing_in_uat.csv"
+MISSING_IN_UAT_CSV = "missing_in_uat.csv"
+MISSING_IN_PROD_CSV = "missing_in_prod.csv"
 
 
 def normalize_email(value: str) -> str:
@@ -40,16 +41,29 @@ def main() -> None:
     prod_emails = read_emails(PROD_CSV)
     merge_uat_emails = read_emails(MERGE_UAT_CSV, strip_invalid_suffix=True)
 
-    missing_emails = sorted(prod_emails - merge_uat_emails)
+    missing_in_uat = sorted(prod_emails - merge_uat_emails)
+    missing_in_prod = sorted(merge_uat_emails - prod_emails)
 
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as handle:
+    with open(MISSING_IN_UAT_CSV, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["Email"])
-        for email in missing_emails:
+        for email in missing_in_uat:
             writer.writerow([email])
 
-    print(f"Wrote {len(missing_emails)} email(s) missing in merge UAT to {OUTPUT_CSV}")
+    with open(MISSING_IN_PROD_CSV, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Email"])
+        for email in missing_in_prod:
+            writer.writerow([email])
+
+    print(
+        f"Wrote {len(missing_in_uat)} email(s) missing in merge UAT to {MISSING_IN_UAT_CSV}"
+    )
+    print(
+        f"Wrote {len(missing_in_prod)} email(s) missing in prod to {MISSING_IN_PROD_CSV}"
+    )
 
 
 if __name__ == "__main__":
     main()
+
