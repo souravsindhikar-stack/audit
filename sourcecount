@@ -1,8 +1,8 @@
-"""
+r"""
 Utility to count non-empty values in the ``Id`` column across CSV files.
 
 Usage:
-    python scripts/count_ids.py --root "C:\\path\\to\\main\\folder" --output "output\\id_counts.xlsx"
+    python scripts/count_ids.py --root "C:\path\to\main\folder" --output "output\id_counts.xlsx"
 
 Only the ``--root`` argument is required. The script walks every subfolder inside the
 specified root, finds all ``.csv`` files, counts non-empty ``Id`` values, and writes a
