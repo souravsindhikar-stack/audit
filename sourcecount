@@ -1,8 +1,8 @@
 r"""
 Utility to count non-empty values in the ``Id`` column across CSV files.
 
-Usage:
-    python scripts/count_ids.py --root "C:\path\to\main\folder" --output "output\id_counts.xlsx"
+Usage Example:
+    python source_validation.py --root "C:\Users\Sourav.Sindhikar\Downloads\Audit\UAT_Success_Count"" --output "output\id_counts.xlsx"
 
 Only the ``--root`` argument is required. The script walks every subfolder inside the
 specified root, finds all ``.csv`` files, counts non-empty ``Id`` values, and writes a
@@ -70,6 +70,7 @@ def summarize_ids(root: Path) -> List[FileIdSummary]:
     """Walk the root path to collect Id counts for each CSV file."""
     summaries: List[FileIdSummary] = []
     for csv_file in find_csv_files(root):
+        print(f"Processing: {csv_file}")  # 👈 progress message
         summary = count_ids_in_file(csv_file)
         try:
             summary.folder = str(csv_file.parent.relative_to(root))
@@ -121,19 +122,18 @@ def main(argv: Iterable[str] | None = None) -> int:
     output_path: Path = args.output.expanduser().resolve()
 
     if not root_path.exists() or not root_path.is_dir():
-        print(f"Root path does not exist or is not a directory: {root_path}", file=sys.stderr)
+        print(f"❌ Root path does not exist or is not a directory: {root_path}", file=sys.stderr)
         return 1
 
     summaries = summarize_ids(root_path)
     if not summaries:
-        print(f"No CSV files found under: {root_path}", file=sys.stderr)
+        print(f"⚠️ No CSV files found under: {root_path}", file=sys.stderr)
         return 2
 
     write_summary_excel(summaries, output_path)
-    print(f"Summary written to {output_path}")
+    print(f"\n✅ Summary written to: {output_path}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
