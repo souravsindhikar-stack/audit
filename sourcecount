@@ -1,11 +1,11 @@
 r"""
-Utility to count non-empty values in the ``Id`` column across CSV files.
+Utility to count non-empty values in the ``Legacy_SF_Record_ID__c`` column across CSV files.
 
 Usage Example:
-    python source_validation.py --root "C:\Users\Sourav.Sindhikar\Downloads\Audit\UAT_Success_Count"" --output "output\id_counts.xlsx"
+    python source_validation.py --root "C:\Users\Sourav.Sindhikar\Downloads\Audit\UAT_Success_Count" --output "output\id_counts.xlsx"
 
 Only the ``--root`` argument is required. The script walks every subfolder inside the
-specified root, finds all ``.csv`` files, counts non-empty ``Id`` values, and writes a
+specified root, finds all ``.csv`` files, counts non-empty ``Legacy_SF_Record_ID__c`` values, and writes a
 summary Excel workbook containing the parent folder name for each file.
 """
 
@@ -29,23 +29,26 @@ class FileIdSummary:
     notes: str = ""
 
 
+COLUMN_NAME = "Legacy_SF_Record_ID__c"
+
+
 def find_csv_files(root: Path) -> Iterable[Path]:
     """Yield all CSV files under the root folder."""
     return (path for path in root.rglob("*.csv") if path.is_file())
 
 
 def count_ids_in_file(csv_path: Path) -> FileIdSummary:
-    """Count non-empty Id values in the given CSV file."""
+    """Count non-empty Legacy_SF_Record_ID__c values in the given CSV file."""
     try:
-        df = pd.read_csv(csv_path, usecols=["Id"])
+        df = pd.read_csv(csv_path, usecols=[COLUMN_NAME])
     except ValueError:
-        # 'Id' column not present
+        # target column not present
         return FileIdSummary(
             folder=str(csv_path.parent),
             file_name=csv_path.name,
             file_path=str(csv_path),
             id_count=0,
-            notes="Missing Id column",
+            notes=f"Missing {COLUMN_NAME} column",
         )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return FileIdSummary(
@@ -56,7 +59,7 @@ def count_ids_in_file(csv_path: Path) -> FileIdSummary:
             notes=f"Read error: {exc}",
         )
 
-    id_series = df["Id"].replace("", pd.NA)
+    id_series = df[COLUMN_NAME].replace("", pd.NA)
     id_count = int(id_series.dropna().shape[0])
     return FileIdSummary(
         folder=str(csv_path.parent),
@@ -67,10 +70,9 @@ def count_ids_in_file(csv_path: Path) -> FileIdSummary:
 
 
 def summarize_ids(root: Path) -> List[FileIdSummary]:
-    """Walk the root path to collect Id counts for each CSV file."""
+    """Walk the root path to collect Legacy_SF_Record_ID__c counts for each CSV file."""
     summaries: List[FileIdSummary] = []
     for csv_file in find_csv_files(root):
-        print(f"Processing: {csv_file}")  # 👈 progress message
         summary = count_ids_in_file(csv_file)
         try:
             summary.folder = str(csv_file.parent.relative_to(root))
@@ -89,7 +91,7 @@ def write_summary_excel(summaries: List[FileIdSummary], output_path: Path) -> No
             "Folder": summary.folder,
             "File Name": summary.file_name,
             "File Path": summary.file_path,
-            "Id Count": summary.id_count,
+            f"{COLUMN_NAME} Count": summary.id_count,
             "Notes": summary.notes,
         }
         for summary in summaries
@@ -100,7 +102,9 @@ def write_summary_excel(summaries: List[FileIdSummary], output_path: Path) -> No
 
 
 def parse_args(argv: Iterable[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Count Id column records in CSV files.")
+    parser = argparse.ArgumentParser(
+        description=f"Count {COLUMN_NAME} column records in CSV files."
+    )
     parser.add_argument(
         "--root",
         required=True,
@@ -122,18 +126,19 @@ def main(argv: Iterable[str] | None = None) -> int:
     output_path: Path = args.output.expanduser().resolve()
 
     if not root_path.exists() or not root_path.is_dir():
-        print(f"❌ Root path does not exist or is not a directory: {root_path}", file=sys.stderr)
+        print(f"Root path does not exist or is not a directory: {root_path}", file=sys.stderr)
         return 1
 
     summaries = summarize_ids(root_path)
     if not summaries:
-        print(f"⚠️ No CSV files found under: {root_path}", file=sys.stderr)
+        print(f"No CSV files found under: {root_path}", file=sys.stderr)
         return 2
 
     write_summary_excel(summaries, output_path)
-    print(f"\n✅ Summary written to: {output_path}")
+    print(f"Summary written to {output_path}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
