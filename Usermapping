@@ -1,9 +1,12 @@
 import os
+
 import pandas as pd
 
 # ==== File Paths ====
 source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Alliance\Case_Alliance without Parent\Case_Alliance_V6.csv"
+
 vlookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Vlookup_mapping_file 5 2.csv"
+
 output_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output-UserMapping\Wihtout_ParentId\OutputUserMapping-Case_Alliance_V6.csv"
 
 # ==== Remove previous output file if exists ====
@@ -20,11 +23,14 @@ for col in vlookup_df.columns:
 
 # ==== Build Lookup Dictionaries (Case-Insensitive) ====
 dict_b_to_c = {k.lower(): v for k, v in zip(vlookup_df["digital_prod_Id"], vlookup_df["digital_Global_ID__c"])}
+
 dict_g_to_f = {k.lower(): v for k, v in zip(vlookup_df["merge_Global_ID__c"], vlookup_df["merge_Id"])}
+
 dict_email_name_to_f = {
     (str(row["merge_email"]).lower(), str(row["merge_Name"]).lower()): row["merge_Id"]
     for _, row in vlookup_df.iterrows()
 }
+
 dict_b_to_email_name = {
     str(row["digital_prod_Id"]).lower(): (str(row["digital_Email"]).lower(), str(row["digital_Name"]).lower())
     for _, row in vlookup_df.iterrows()
@@ -50,6 +56,10 @@ def map_id(digital_prod_id):
 
     return ""
 
+# ==== Default Values ====
+DEFAULT_OWNER_ID = "005Wr00000ECxAjIAL"
+DEFAULT_CREATEDBY_LASTMODIFIED_ID = "005A0000000rXeVIAU"
+
 # ==== Process Source File in Chunks ====
 chunk_size = 50000
 reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
@@ -60,14 +70,49 @@ for i, chunk in enumerate(reader, start=1):
     chunk = chunk.fillna("")
 
     # Columns to map
-    columns_to_map = ["OwnerId","CreatedById","LastModifiedById"]
+    columns_to_map = ["OwnerId", "CreatedById", "LastModifiedById"]
 
+    # Get original column order
+    original_columns = chunk.columns.tolist()
+
+    # Create mapped columns and fill defaults
     for col in columns_to_map:
         if col in chunk.columns:
+            # Create mapped column
             mapped = chunk[col].map(map_id)
-            chunk[f"{col}_mapped"] = mapped
+            mapped_col_name = f"{col}_mapped"
+            chunk[mapped_col_name] = mapped
+            
+            # Fill default values: only if source has value but mapping is empty
+            if col == "OwnerId":
+                # For OwnerId_mapped: fill with default if source has value but mapping is empty
+                mask = (chunk[col].astype(str).str.strip() != "") & (chunk[mapped_col_name].astype(str).str.strip() == "")
+                chunk.loc[mask, mapped_col_name] = DEFAULT_OWNER_ID
+            elif col in ["CreatedById", "LastModifiedById"]:
+                # For CreatedById_mapped and LastModifiedById_mapped: fill with default if source has value but mapping is empty
+                mask = (chunk[col].astype(str).str.strip() != "") & (chunk[mapped_col_name].astype(str).str.strip() == "")
+                chunk.loc[mask, mapped_col_name] = DEFAULT_CREATEDBY_LASTMODIFIED_ID
         else:
             print(f"⚠️ Column '{col}' not found in chunk {i}, skipping...")
+
+    # Reorder columns to place mapped columns next to their originals
+    final_column_order = []
+    
+    # Build final order: go through original columns and insert mapped columns right after
+    for col in original_columns:
+        final_column_order.append(col)
+        if col in columns_to_map:
+            mapped_col_name = f"{col}_mapped"
+            if mapped_col_name in chunk.columns:
+                final_column_order.append(mapped_col_name)
+    
+    # Add any remaining columns that weren't in the original list (shouldn't happen, but just in case)
+    for col in chunk.columns:
+        if col not in final_column_order:
+            final_column_order.append(col)
+    
+    # Reorder the chunk
+    chunk = chunk[final_column_order]
 
     # Write to output file
     if not header_written:
@@ -83,3 +128,4 @@ for i, chunk in enumerate(reader, start=1):
 
 print(f"✅ Mapping completed successfully. Output saved to: {output_file}")
 print(f"📊 Total rows processed: {total_rows}")
+
