@@ -72,47 +72,26 @@ for i, chunk in enumerate(reader, start=1):
     # Columns to map
     columns_to_map = ["OwnerId", "CreatedById", "LastModifiedById"]
 
-    # Get original column order
-    original_columns = chunk.columns.tolist()
-
-    # Create mapped columns and fill defaults
+    # Replace original columns with mapped values and fill defaults
     for col in columns_to_map:
         if col in chunk.columns:
-            # Create mapped column
-            mapped = chunk[col].map(map_id)
-            mapped_col_name = f"{col}_mapped"
-            chunk[mapped_col_name] = mapped
+            # Store original values to check if source has value
+            original_values = chunk[col].copy()
+            
+            # Replace original column with mapped values
+            chunk[col] = chunk[col].map(map_id)
             
             # Fill default values: only if source has value but mapping is empty
             if col == "OwnerId":
-                # For OwnerId_mapped: fill with default if source has value but mapping is empty
-                mask = (chunk[col].astype(str).str.strip() != "") & (chunk[mapped_col_name].astype(str).str.strip() == "")
-                chunk.loc[mask, mapped_col_name] = DEFAULT_OWNER_ID
+                # For OwnerId: fill with default if source has value but mapping is empty
+                mask = (original_values.astype(str).str.strip() != "") & (chunk[col].astype(str).str.strip() == "")
+                chunk.loc[mask, col] = DEFAULT_OWNER_ID
             elif col in ["CreatedById", "LastModifiedById"]:
-                # For CreatedById_mapped and LastModifiedById_mapped: fill with default if source has value but mapping is empty
-                mask = (chunk[col].astype(str).str.strip() != "") & (chunk[mapped_col_name].astype(str).str.strip() == "")
-                chunk.loc[mask, mapped_col_name] = DEFAULT_CREATEDBY_LASTMODIFIED_ID
+                # For CreatedById and LastModifiedById: fill with default if source has value but mapping is empty
+                mask = (original_values.astype(str).str.strip() != "") & (chunk[col].astype(str).str.strip() == "")
+                chunk.loc[mask, col] = DEFAULT_CREATEDBY_LASTMODIFIED_ID
         else:
             print(f"⚠️ Column '{col}' not found in chunk {i}, skipping...")
-
-    # Reorder columns to place mapped columns next to their originals
-    final_column_order = []
-    
-    # Build final order: go through original columns and insert mapped columns right after
-    for col in original_columns:
-        final_column_order.append(col)
-        if col in columns_to_map:
-            mapped_col_name = f"{col}_mapped"
-            if mapped_col_name in chunk.columns:
-                final_column_order.append(mapped_col_name)
-    
-    # Add any remaining columns that weren't in the original list (shouldn't happen, but just in case)
-    for col in chunk.columns:
-        if col not in final_column_order:
-            final_column_order.append(col)
-    
-    # Reorder the chunk
-    chunk = chunk[final_column_order]
 
     # Write to output file
     if not header_written:
