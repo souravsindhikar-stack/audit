@@ -1,0 +1,85 @@
+import os
+import pandas as pd
+
+# ==== File Paths ====
+source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Alliance\Case_Alliance without Parent\Case_Alliance_V6.csv"
+vlookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Vlookup_mapping_file 5 2.csv"
+output_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output-UserMapping\Wihtout_ParentId\OutputUserMapping-Case_Alliance_V6.csv"
+
+# ==== Remove previous output file if exists ====
+if os.path.exists(output_file):
+    os.remove(output_file)
+    print(f"⚠️ Existing output file removed: {output_file}")
+
+# ==== Load Vlookup File ====
+vlookup_df = pd.read_csv(vlookup_file, dtype=str).fillna("")
+
+# ==== Clean Whitespace ====
+for col in vlookup_df.columns:
+    vlookup_df[col] = vlookup_df[col].astype(str).str.strip()
+
+# ==== Build Lookup Dictionaries (Case-Insensitive) ====
+dict_b_to_c = {k.lower(): v for k, v in zip(vlookup_df["digital_prod_Id"], vlookup_df["digital_Global_ID__c"])}
+dict_g_to_f = {k.lower(): v for k, v in zip(vlookup_df["merge_Global_ID__c"], vlookup_df["merge_Id"])}
+dict_email_name_to_f = {
+    (str(row["merge_email"]).lower(), str(row["merge_Name"]).lower()): row["merge_Id"]
+    for _, row in vlookup_df.iterrows()
+}
+dict_b_to_email_name = {
+    str(row["digital_prod_Id"]).lower(): (str(row["digital_Email"]).lower(), str(row["digital_Name"]).lower())
+    for _, row in vlookup_df.iterrows()
+}
+
+# ==== Mapping Function ====
+def map_id(digital_prod_id):
+    if not digital_prod_id:
+        return ""
+
+    digital_prod_id_lc = str(digital_prod_id).strip().lower()
+
+    # Check global ID mapping
+    digital_global_id = dict_b_to_c.get(digital_prod_id_lc, "").lower()
+    if digital_global_id and digital_global_id in dict_g_to_f:
+        return dict_g_to_f[digital_global_id]
+
+    # Check email + name mapping
+    email_name = dict_b_to_email_name.get(digital_prod_id_lc)
+    if email_name:
+        email_name_lc = (email_name[0].lower(), email_name[1].lower())
+        return dict_email_name_to_f.get(email_name_lc, "")
+
+    return ""
+
+# ==== Process Source File in Chunks ====
+chunk_size = 50000
+reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
+header_written = False
+total_rows = 0
+
+for i, chunk in enumerate(reader, start=1):
+    chunk = chunk.fillna("")
+
+    # Columns to map
+    columns_to_map = ["OwnerId","CreatedById","LastModifiedById"]
+
+    for col in columns_to_map:
+        if col in chunk.columns:
+            mapped = chunk[col].map(map_id)
+            chunk[f"{col}_mapped"] = mapped
+        else:
+            print(f"⚠️ Column '{col}' not found in chunk {i}, skipping...")
+
+    # Write to output file
+    if not header_written:
+        # First chunk: write mode with header
+        chunk.to_csv(output_file, index=False, mode="w", header=True, encoding="utf-8-sig")
+        header_written = True
+    else:
+        # Subsequent chunks: append mode without header
+        chunk.to_csv(output_file, index=False, mode="a", header=False, encoding="utf-8-sig")
+
+    total_rows += len(chunk)
+    print(f"✅ Processed chunk {i} ({len(chunk)} rows)")
+
+print(f"✅ Mapping completed successfully. Output saved to: {output_file}")
+print(f"📊 Total rows processed: {total_rows}")
