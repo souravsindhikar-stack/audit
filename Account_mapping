@@ -2,11 +2,11 @@ import os
 import pandas as pd
 
 # ==== File Paths ====
-source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\Without Parent\UserMapping-Case_Alliance_V1.csv"
+source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
 lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
-output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping\Alliance\Without_parent"
+output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping"
 output_file = os.path.join(output_dir, "accountid_mapped.csv")
-unmatched_file = os.path.join(output_dir, "no_match_accountid.csv")
+unmatched_file = os.path.join(output_dir, "no_math_accountid.csv")
 
 # ==== Create output directory if it doesn't exist ====
 os.makedirs(output_dir, exist_ok=True)
@@ -89,6 +89,10 @@ for i, chunk in enumerate(reader, start=1):
     matched_chunk = chunk[matched_mask].copy()
     unmatched_chunk = chunk[unmatched_mask].copy()
     
+    # Restore original AccountId values for unmatched rows
+    if len(unmatched_chunk) > 0:
+        unmatched_chunk["AccountId"] = original_account_ids[unmatched_mask].values
+    
     # ==== Update RecordTypeId and BusinessHoursId columns ====
     # Update RecordTypeId for matched chunk
     if len(matched_chunk) > 0:
@@ -129,3 +133,4 @@ print(f"\n✅ Mapping completed successfully!")
 print(f"📊 Total rows processed: {total_rows}")
 print(f"✅ Matched rows: {matched_count} → Saved to: {output_file}")
 print(f"⚠️ Unmatched rows: {unmatched_count} → Saved to: {unmatched_file}")
+
