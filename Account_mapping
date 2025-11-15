@@ -91,7 +91,11 @@ for i, chunk in enumerate(reader, start=1):
     
     # Restore original AccountId values for unmatched rows
     if len(unmatched_chunk) > 0:
-        unmatched_chunk["AccountId"] = original_account_ids[unmatched_mask].values
+        # Directly assign the original AccountId values for unmatched rows
+        # Reset index to ensure proper alignment
+        unmatched_chunk = unmatched_chunk.reset_index(drop=True)
+        original_unmatched = original_account_ids[unmatched_mask].reset_index(drop=True)
+        unmatched_chunk["AccountId"] = original_unmatched
     
     # ==== Update RecordTypeId and BusinessHoursId columns ====
     # Update RecordTypeId for matched chunk
