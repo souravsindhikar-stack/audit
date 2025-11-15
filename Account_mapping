@@ -2,11 +2,11 @@ import os
 import pandas as pd
 
 # ==== File Paths ====
-source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
+source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\Without Parent\UserMapping-Case_Alliance_V1.csv"
 lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
-output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping"
+output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping\Alliance\Without_parent"
 output_file = os.path.join(output_dir, "accountid_mapped.csv")
-unmatched_file = os.path.join(output_dir, "no_math_accountid.csv")
+unmatched_file = os.path.join(output_dir, "no_match_accountid.csv")
 
 # ==== Create output directory if it doesn't exist ====
 os.makedirs(output_dir, exist_ok=True)
@@ -129,4 +129,3 @@ print(f"\n✅ Mapping completed successfully!")
 print(f"📊 Total rows processed: {total_rows}")
 print(f"✅ Matched rows: {matched_count} → Saved to: {output_file}")
 print(f"⚠️ Unmatched rows: {unmatched_count} → Saved to: {unmatched_file}")
-
