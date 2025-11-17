@@ -1,0 +1,139 @@
+import os
+import pandas as pd
+
+# ==== File Paths ====
+source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\Without Parent\UserMapping-Case_Alliance_V6.csv"
+lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
+output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping\Alliance\Without_parent"
+output_file = os.path.join(output_dir, "Alliance_without_parent_accountid_mapped_V6.csv")
+unmatched_file = os.path.join(output_dir, "Alliance_without_parent_no_match_accountid_V6.csv")
+
+# ==== Create output directory if it doesn't exist ====
+os.makedirs(output_dir, exist_ok=True)
+
+# ==== Remove previous output files if exists ====
+if os.path.exists(output_file):
+    os.remove(output_file)
+    print(f"⚠️ Existing output file removed: {output_file}")
+
+if os.path.exists(unmatched_file):
+    os.remove(unmatched_file)
+    print(f"⚠️ Existing unmatched file removed: {unmatched_file}")
+
+# ==== Load Lookup File ====
+print("📖 Loading lookup file...")
+if not os.path.exists(lookup_file):
+    print(f"❌ Error: Lookup file not found: {lookup_file}")
+    exit(1)
+
+lookup_df = pd.read_excel(lookup_file, dtype=str).fillna("")
+
+# Check if required columns exist in lookup file
+if "Legacy_SF_Record_ID__c" not in lookup_df.columns:
+    print(f"❌ Error: Column 'Legacy_SF_Record_ID__c' not found in lookup file")
+    exit(1)
+if "Id" not in lookup_df.columns:
+    print(f"❌ Error: Column 'Id' not found in lookup file")
+    exit(1)
+
+# ==== Clean Whitespace ====
+for col in lookup_df.columns:
+    lookup_df[col] = lookup_df[col].astype(str).str.strip()
+
+# ==== Build Lookup Dictionary (Case-Insensitive) ====
+print("🔍 Building lookup dictionary...")
+dict_lookup = {k.lower(): v for k, v in zip(lookup_df["Legacy_SF_Record_ID__c"], lookup_df["Id"]) if str(k).strip() != ""}
+
+# ==== Mapping Function ====
+def map_account_id(account_id):
+    if not account_id or str(account_id).strip() == "":
+        return ""
+    account_id_lc = str(account_id).strip().lower()
+    return dict_lookup.get(account_id_lc, "")
+
+# ==== Process Source File in Chunks ====
+if not os.path.exists(source_file):
+    print(f"❌ Error: Source file not found: {source_file}")
+    exit(1)
+
+chunk_size = 50000
+reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
+
+header_written_mapped = False
+header_written_unmatched = False
+total_rows = 0
+matched_count = 0
+unmatched_count = 0
+
+print("🔄 Processing source file in chunks...")
+for i, chunk in enumerate(reader, start=1):
+    chunk = chunk.fillna("")
+    
+    # Check if AccountId column exists
+    if "AccountId" not in chunk.columns:
+        print(f"⚠️ Column 'AccountId' not found in chunk {i}, skipping...")
+        continue
+    
+    # Store original AccountId values
+    original_account_ids = chunk["AccountId"].copy()
+    
+    # Map AccountId values
+    chunk["AccountId"] = chunk["AccountId"].map(map_account_id)
+    
+    # Identify matched and unmatched rows
+    # Matched: AccountId was replaced (not empty in original, not empty after mapping)
+    # Unmatched: AccountId was not found (not empty in original, empty after mapping)
+    matched_mask = (original_account_ids.astype(str).str.strip() != "") & (chunk["AccountId"].astype(str).str.strip() != "")
+    unmatched_mask = (original_account_ids.astype(str).str.strip() != "") & (chunk["AccountId"].astype(str).str.strip() == "")
+    
+    matched_chunk = chunk[matched_mask].copy()
+    unmatched_chunk = chunk[unmatched_mask].copy()
+    
+    # Restore original AccountId values for unmatched rows
+    if len(unmatched_chunk) > 0:
+        # Directly assign the original AccountId values for unmatched rows
+        # Reset index to ensure proper alignment
+        unmatched_chunk = unmatched_chunk.reset_index(drop=True)
+        original_unmatched = original_account_ids[unmatched_mask].reset_index(drop=True)
+        unmatched_chunk["AccountId"] = original_unmatched
+    
+    # ==== Update RecordTypeId and BusinessHoursId columns ====
+    # Update RecordTypeId for matched chunk
+    if len(matched_chunk) > 0:
+        if "RecordTypeId" in matched_chunk.columns:
+            matched_chunk["RecordTypeId"] = "012Wr000001ezc5IAA"
+        if "BusinessHoursId" in matched_chunk.columns:
+            matched_chunk["BusinessHoursId"] = matched_chunk["BusinessHoursId"].replace("01m70000000H01GAAS", "01mWr0000012RrmIAE")
+    
+    # Update RecordTypeId for unmatched chunk
+    if len(unmatched_chunk) > 0:
+        if "RecordTypeId" in unmatched_chunk.columns:
+            unmatched_chunk["RecordTypeId"] = "012Wr000001ezc5IAA"
+        if "BusinessHoursId" in unmatched_chunk.columns:
+            unmatched_chunk["BusinessHoursId"] = unmatched_chunk["BusinessHoursId"].replace("01m70000000H01GAAS", "01mWr0000012RrmIAE")
+    
+    # Write matched rows to output file
+    if len(matched_chunk) > 0:
+        if not header_written_mapped:
+            matched_chunk.to_csv(output_file, index=False, mode="w", header=True, encoding="utf-8-sig")
+            header_written_mapped = True
+        else:
+            matched_chunk.to_csv(output_file, index=False, mode="a", header=False, encoding="utf-8-sig")
+        matched_count += len(matched_chunk)
+    
+    # Write unmatched rows to unmatched file
+    if len(unmatched_chunk) > 0:
+        if not header_written_unmatched:
+            unmatched_chunk.to_csv(unmatched_file, index=False, mode="w", header=True, encoding="utf-8-sig")
+            header_written_unmatched = True
+        else:
+            unmatched_chunk.to_csv(unmatched_file, index=False, mode="a", header=False, encoding="utf-8-sig")
+        unmatched_count += len(unmatched_chunk)
+    
+    total_rows += len(chunk)
+    print(f"✅ Processed chunk {i} ({len(chunk)} rows) - Matched: {len(matched_chunk)}, Unmatched: {len(unmatched_chunk)}")
+
+print(f"\n✅ Mapping completed successfully!")
+print(f"📊 Total rows processed: {total_rows}")
+print(f"✅ Matched rows: {matched_count} → Saved to: {output_file}")
+print(f"⚠️ Unmatched rows: {unmatched_count} → Saved to: {unmatched_file}")
