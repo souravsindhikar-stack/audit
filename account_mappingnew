@@ -24,8 +24,10 @@ def load_lookup(lookup_path):
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()
 
-    if "Legacy_SF_Record_ID__c" not in df.columns or "Id" not in df.columns:
-        print("❌ Lookup file missing Legacy_SF_Record_ID__c or Id columns.")
+    needed_columns = {"Legacy_SF_Record_ID__c", "Id"}
+    missing = needed_columns - set(df.columns)
+    if missing:
+        print(f"❌ Lookup file missing columns: {', '.join(missing)}")
         sys.exit(1)
 
     acct_lookup = {
@@ -34,22 +36,14 @@ def load_lookup(lookup_path):
         if str(legacy).strip()
     }
 
-    if "Expedite_Supplier__c" not in df.columns:
-        print("❌ Lookup file missing Expedite_Supplier__c column.")
-        sys.exit(1)
-
-    expedite_lookup = {
-        legacy.lower(): supplier
-        for legacy, supplier in zip(df["Legacy_SF_Record_ID__c"], df["Expedite_Supplier__c"])
-        if str(legacy).strip() and str(supplier).strip()
-    }
-
+    # Expedite uses the same mapping: legacy → Id
+    expedite_lookup = acct_lookup.copy()
     return acct_lookup, expedite_lookup
 
 def apply_account_logic(row, acct_lookup):
-    recordtype_name = row.get("Account.RecordType.Name", "")
-    account_id = row.get("AccountId", "")
-    key = str(account_id).strip().lower()
+    recordtype_name = str(row.get("Account.RecordType.Name", ""))
+    account_id = str(row.get("AccountId", "")).strip()
+    key = account_id.lower()
 
     if "arrow / verical" in recordtype_name.lower():
         return ARROW_ACCOUNT_ID
@@ -88,9 +82,9 @@ def main():
     unmatched_rows = []
 
     def map_expedite(row):
-        legacy = str(row.get("AccountId", "")).strip().lower()
-        if legacy and legacy in expedite_lookup:
-            return expedite_lookup[legacy]
+        legacy_value = str(row.get("Expedite_Supplier__c", "")).strip().lower()
+        if legacy_value and legacy_value in expedite_lookup:
+            return expedite_lookup[legacy_value]
         unmatched_rows.append(row.name)
         return row.get("Expedite_Supplier__c", "")
 
