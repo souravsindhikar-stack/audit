@@ -22,7 +22,7 @@ def load_lookup(path):
     print("📖 Loading lookup file...")
     df = pd.read_excel(path, dtype=str).fillna("")
     for col in df.columns:
-        df[col] = df[col].astype(str).str.strip()  # <-- corrected
+        df[col] = df[col].astype(str).str.strip()
 
     required = {"Legacy_SF_Record_ID__c", "Id"}
     missing = required - set(df.columns)
@@ -36,7 +36,7 @@ def load_lookup(path):
         if legacy.strip()
     }
 
-    return mapping, mapping.copy()
+    return mapping
 
 def apply_account_logic(row, acct_lookup):
     rt_name = str(row.get("Account.Recordtype.Name", "")).strip().lower()
@@ -60,10 +60,9 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     main_output = os.path.join(OUTPUT_DIR, "cases_updated.csv")
-    expedite_unmatched_output = os.path.join(OUTPUT_DIR, "cases_expedite_unmatched.csv")
 
     lookup_path = ensure_lookup(LOOKUP_FILE)
-    acct_lookup, expedite_lookup = load_lookup(lookup_path)
+    acct_lookup = load_lookup(lookup_path)
 
     print("🔄 Reading source CSV...")
     df = pd.read_csv(SOURCE_FILE, dtype=str).fillna("")
@@ -77,27 +76,16 @@ def main():
     if "Expedite_Supplier__c" not in df.columns:
         df["Expedite_Supplier__c"] = ""
 
-    unmatched_rows = []
-
     def map_expedite(row):
         legacy = str(row.get("Expedite_Supplier__c", "")).strip().lower()
-        if legacy and legacy in expedite_lookup:
-            return expedite_lookup[legacy]
-        unmatched_rows.append(row.name)
+        if legacy and legacy in acct_lookup:
+            return acct_lookup[legacy]
         return row.get("Expedite_Supplier__c", "")
 
     df["Expedite_Supplier__c"] = df.apply(map_expedite, axis=1)
-    unmatched_df = df.loc[unmatched_rows].copy() if unmatched_rows else pd.DataFrame(columns=df.columns)
 
-    print(f"💾 Saving main output: {main_output}")
+    print(f"💾 Saving output: {main_output}")
     df.to_csv(main_output, index=False, encoding="utf-8-sig")
-
-    if not unmatched_df.empty:
-        print(f"💾 Saving expedite-unmatched output: {expedite_unmatched_output}")
-        unmatched_df.to_csv(expedite_unmatched_output, index=False, encoding="utf-8-sig")
-    else:
-        print("✅ No unmatched expedite rows found.")
-
     print("🎉 Done!")
 
 if __name__ == "__main__":
