@@ -22,7 +22,7 @@ def load_lookup(path):
     print("📖 Loading lookup file...")
     df = pd.read_excel(path, dtype=str).fillna("")
     for col in df.columns:
-        df[col] = df[col].astype(str).strip()
+        df[col] = df[col].astype(str).str.strip()  # <-- corrected
 
     required = {"Legacy_SF_Record_ID__c", "Id"}
     missing = required - set(df.columns)
@@ -36,7 +36,7 @@ def load_lookup(path):
         if legacy.strip()
     }
 
-    return mapping, mapping.copy()  # same mapping for expedite
+    return mapping, mapping.copy()
 
 def apply_account_logic(row, acct_lookup):
     rt_name = str(row.get("Account.Recordtype.Name", "")).strip().lower()
@@ -87,7 +87,6 @@ def main():
         return row.get("Expedite_Supplier__c", "")
 
     df["Expedite_Supplier__c"] = df.apply(map_expedite, axis=1)
-
     unmatched_df = df.loc[unmatched_rows].copy() if unmatched_rows else pd.DataFrame(columns=df.columns)
 
     print(f"💾 Saving main output: {main_output}")
