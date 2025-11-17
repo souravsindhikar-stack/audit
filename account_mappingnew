@@ -12,46 +12,44 @@ ARROW_ACCOUNT_ID = "001Wr00000mKja2IAC"
 UNITY_ACCOUNT_ID = "001Wr00000mKWszIAG"
 DEFAULT_BH_ID = "01mWr0000012RrmIAE"
 
-def ensure_lookup(lookup_path):
-    if not os.path.exists(lookup_path):
-        print(f"❌ Lookup file not found: {lookup_path}")
+def ensure_lookup(path):
+    if not os.path.exists(path):
+        print(f"❌ Lookup file not found: {path}")
         sys.exit(1)
-    return lookup_path
+    return path
 
-def load_lookup(lookup_path):
+def load_lookup(path):
     print("📖 Loading lookup file...")
-    df = pd.read_excel(lookup_path, dtype=str).fillna("")
+    df = pd.read_excel(path, dtype=str).fillna("")
     for col in df.columns:
-        df[col] = df[col].astype(str).str.strip()
+        df[col] = df[col].astype(str).strip()
 
-    needed_columns = {"Legacy_SF_Record_ID__c", "Id"}
-    missing = needed_columns - set(df.columns)
+    required = {"Legacy_SF_Record_ID__c", "Id"}
+    missing = required - set(df.columns)
     if missing:
         print(f"❌ Lookup file missing columns: {', '.join(missing)}")
         sys.exit(1)
 
-    acct_lookup = {
+    mapping = {
         legacy.lower(): new_id
         for legacy, new_id in zip(df["Legacy_SF_Record_ID__c"], df["Id"])
-        if str(legacy).strip()
+        if legacy.strip()
     }
 
-    # Expedite uses the same mapping: legacy → Id
-    expedite_lookup = acct_lookup.copy()
-    return acct_lookup, expedite_lookup
+    return mapping, mapping.copy()  # same mapping for expedite
 
 def apply_account_logic(row, acct_lookup):
-    recordtype_name = str(row.get("Account.RecordType.Name", ""))
-    account_id = str(row.get("AccountId", "")).strip()
-    key = account_id.lower()
+    rt_name = str(row.get("Account.Recordtype.Name", "")).strip().lower()
+    current = str(row.get("AccountId", "")).strip()
+    key = current.lower()
 
-    if "arrow / verical" in recordtype_name.lower():
+    if "arrow / verical" in rt_name:
         return ARROW_ACCOUNT_ID
-    if "unity" in recordtype_name.lower():
+    if "unity" in rt_name:
         return UNITY_ACCOUNT_ID
     if key and key in acct_lookup:
         return acct_lookup[key]
-    return account_id
+    return current
 
 def main():
     print("=== Case Account & Business Hours Updater ===")
@@ -61,7 +59,7 @@ def main():
         sys.exit(1)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    matched_output = os.path.join(OUTPUT_DIR, "cases_updated.csv")
+    main_output = os.path.join(OUTPUT_DIR, "cases_updated.csv")
     expedite_unmatched_output = os.path.join(OUTPUT_DIR, "cases_expedite_unmatched.csv")
 
     lookup_path = ensure_lookup(LOOKUP_FILE)
@@ -82,9 +80,9 @@ def main():
     unmatched_rows = []
 
     def map_expedite(row):
-        legacy_value = str(row.get("Expedite_Supplier__c", "")).strip().lower()
-        if legacy_value and legacy_value in expedite_lookup:
-            return expedite_lookup[legacy_value]
+        legacy = str(row.get("Expedite_Supplier__c", "")).strip().lower()
+        if legacy and legacy in expedite_lookup:
+            return expedite_lookup[legacy]
         unmatched_rows.append(row.name)
         return row.get("Expedite_Supplier__c", "")
 
@@ -92,8 +90,8 @@ def main():
 
     unmatched_df = df.loc[unmatched_rows].copy() if unmatched_rows else pd.DataFrame(columns=df.columns)
 
-    print(f"💾 Saving main output: {matched_output}")
-    df.to_csv(matched_output, index=False, encoding="utf-8-sig")
+    print(f"💾 Saving main output: {main_output}")
+    df.to_csv(main_output, index=False, encoding="utf-8-sig")
 
     if not unmatched_df.empty:
         print(f"💾 Saving expedite-unmatched output: {expedite_unmatched_output}")
