@@ -1,0 +1,114 @@
+import os
+import pandas as pd
+
+# ==== File Paths ====
+source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
+lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
+output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping"
+output_file = os.path.join(output_dir, "accountid_mapped.csv")
+unmatched_file = os.path.join(output_dir, "no_match_accountid.csv")
+
+# ==== Create output directory if it doesn't exist ====
+os.makedirs(output_dir, exist_ok=True)
+
+# ==== Remove previous output files if they exist ====
+for path in (output_file, unmatched_file):
+    if os.path.exists(path):
+        os.remove(path)
+        print(f"⚠️ Existing file removed: {path}")
+
+# ==== Load Lookup File ====
+print("📖 Loading lookup file...")
+if not os.path.exists(lookup_file):
+    raise FileNotFoundError(f"Lookup file not found: {lookup_file}")
+
+lookup_df = pd.read_excel(lookup_file, dtype=str).fillna("")
+required_cols = {"Legacy_SF_Record_ID__c", "Id"}
+missing = required_cols - set(lookup_df.columns)
+if missing:
+    raise ValueError(f"Missing column(s) in lookup file: {', '.join(missing)}")
+
+for col in lookup_df.columns:
+    lookup_df[col] = lookup_df[col].astype(str).str.strip()
+
+print("🔍 Building lookup dictionary...")
+dict_lookup = {
+    str(k).strip().lower(): str(v).strip()
+    for k, v in zip(lookup_df["Legacy_SF_Record_ID__c"], lookup_df["Id"])
+    if str(k).strip()
+}
+
+# ==== Mapping Function ====
+def map_account_id(account_id: str) -> str:
+    account_id = (account_id or "").strip()
+    if not account_id:
+        return ""
+    return dict_lookup.get(account_id.lower(), "")
+
+# ==== Process Source File in Chunks ====
+if not os.path.exists(source_file):
+    raise FileNotFoundError(f"Source file not found: {source_file}")
+
+chunk_size = 50_000
+reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
+
+header_written_mapped = False
+header_written_unmatched = False
+total_rows = matched_count = unmatched_count = 0
+
+print("🔄 Processing source file in chunks...")
+for i, chunk in enumerate(reader, start=1):
+    chunk = chunk.fillna("")
+
+    if "AccountId" not in chunk.columns:
+        print(f"⚠️ Column 'AccountId' not found in chunk {i}, skipping...")
+        continue
+
+    original_account_ids = chunk["AccountId"].copy()
+    chunk["AccountId"] = chunk["AccountId"].map(map_account_id)
+
+    original_stripped = original_account_ids.astype(str).str.strip()
+    mapped_stripped = chunk["AccountId"].astype(str).str.strip()
+
+    matched_mask = (original_stripped != "") & (mapped_stripped != "")
+    unmatched_mask = (original_stripped != "") & (mapped_stripped == "")
+
+    matched_chunk = chunk[matched_mask].copy()
+    unmatched_chunk = chunk[unmatched_mask].copy()
+
+    if len(unmatched_chunk) > 0:
+        unmatched_chunk = unmatched_chunk.reset_index(drop=True)
+        original_unmatched = original_account_ids[unmatched_mask].reset_index(drop=True)
+        unmatched_chunk["AccountId"] = original_unmatched
+
+    if len(matched_chunk) > 0:
+        matched_chunk.to_csv(
+            output_file,
+            index=False,
+            mode="a" if header_written_mapped else "w",
+            header=not header_written_mapped,
+            encoding="utf-8-sig",
+        )
+        header_written_mapped = True
+        matched_count += len(matched_chunk)
+
+    if len(unmatched_chunk) > 0:
+        unmatched_chunk.to_csv(
+            unmatched_file,
+            index=False,
+            mode="a" if header_written_unmatched else "w",
+            header=not header_written_unmatched,
+            encoding="utf-8-sig",
+        )
+        header_written_unmatched = True
+        unmatched_count += len(unmatched_chunk)
+
+    total_rows += len(chunk)
+    print(
+        f"✅ Chunk {i}: {len(chunk)} rows | Matched: {len(matched_chunk)} | Unmatched: {len(unmatched_chunk)}"
+    )
+
+print("\n✅ Mapping completed!")
+print(f"📊 Total rows processed: {total_rows}")
+print(f"✅ Matched rows: {matched_count} → {output_file}")
+print(f"⚠️ Unmatched rows: {unmatched_count} → {unmatched_file}")
