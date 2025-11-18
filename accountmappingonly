@@ -1,6 +1,11 @@
 import os
 import pandas as pd
 
+# ==== Column names (edit these when source/lookup changes) ====
+source_id_col = "AccountId"               # column in source CSV to map
+lookup_key_col = "Legacy_SF_Record_ID__c"  # column in lookup with legacy IDs
+lookup_value_col = "Id"                   # column in lookup with new IDs
+
 # ==== File Paths ====
 source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
 lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
@@ -8,22 +13,22 @@ output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping"
 output_file = os.path.join(output_dir, "accountid_mapped.csv")
 unmatched_file = os.path.join(output_dir, "no_match_accountid.csv")
 
-# ==== Create output directory if it doesn't exist ====
+# ==== Create output directory ====
 os.makedirs(output_dir, exist_ok=True)
 
-# ==== Remove previous output files if they exist ====
+# ==== Remove old outputs ====
 for path in (output_file, unmatched_file):
     if os.path.exists(path):
         os.remove(path)
-        print(f"⚠️ Existing file removed: {path}")
+        print(f"⚠️ Removed existing file: {path}")
 
-# ==== Load Lookup File ====
+# ==== Load lookup sheet ====
 print("📖 Loading lookup file...")
 if not os.path.exists(lookup_file):
     raise FileNotFoundError(f"Lookup file not found: {lookup_file}")
 
 lookup_df = pd.read_excel(lookup_file, dtype=str).fillna("")
-required_cols = {"Legacy_SF_Record_ID__c", "Id"}
+required_cols = {lookup_key_col, lookup_value_col}
 missing = required_cols - set(lookup_df.columns)
 if missing:
     raise ValueError(f"Missing column(s) in lookup file: {', '.join(missing)}")
@@ -31,21 +36,20 @@ if missing:
 for col in lookup_df.columns:
     lookup_df[col] = lookup_df[col].astype(str).str.strip()
 
-print("🔍 Building lookup dictionary...")
 dict_lookup = {
     str(k).strip().lower(): str(v).strip()
-    for k, v in zip(lookup_df["Legacy_SF_Record_ID__c"], lookup_df["Id"])
+    for k, v in zip(lookup_df[lookup_key_col], lookup_df[lookup_value_col])
     if str(k).strip()
 }
 
-# ==== Mapping Function ====
-def map_account_id(account_id: str) -> str:
-    account_id = (account_id or "").strip()
-    if not account_id:
+# ==== Mapping helper ====
+def map_value(raw_value: str) -> str:
+    raw_value = (raw_value or "").strip()
+    if not raw_value:
         return ""
-    return dict_lookup.get(account_id.lower(), "")
+    return dict_lookup.get(raw_value.lower(), "")
 
-# ==== Process Source File in Chunks ====
+# ==== Process source CSV ====
 if not os.path.exists(source_file):
     raise FileNotFoundError(f"Source file not found: {source_file}")
 
@@ -60,15 +64,15 @@ print("🔄 Processing source file in chunks...")
 for i, chunk in enumerate(reader, start=1):
     chunk = chunk.fillna("")
 
-    if "AccountId" not in chunk.columns:
-        print(f"⚠️ Column 'AccountId' not found in chunk {i}, skipping...")
+    if source_id_col not in chunk.columns:
+        print(f"⚠️ Column '{source_id_col}' missing in chunk {i}, skipping...")
         continue
 
-    original_account_ids = chunk["AccountId"].copy()
-    chunk["AccountId"] = chunk["AccountId"].map(map_account_id)
+    original_values = chunk[source_id_col].copy()
+    chunk[source_id_col] = chunk[source_id_col].map(map_value)
 
-    original_stripped = original_account_ids.astype(str).str.strip()
-    mapped_stripped = chunk["AccountId"].astype(str).str.strip()
+    original_stripped = original_values.astype(str).str.strip()
+    mapped_stripped = chunk[source_id_col].astype(str).str.strip()
 
     matched_mask = (original_stripped != "") & (mapped_stripped != "")
     unmatched_mask = (original_stripped != "") & (mapped_stripped == "")
@@ -78,8 +82,8 @@ for i, chunk in enumerate(reader, start=1):
 
     if len(unmatched_chunk) > 0:
         unmatched_chunk = unmatched_chunk.reset_index(drop=True)
-        original_unmatched = original_account_ids[unmatched_mask].reset_index(drop=True)
-        unmatched_chunk["AccountId"] = original_unmatched
+        original_unmatched = original_values[unmatched_mask].reset_index(drop=True)
+        unmatched_chunk[source_id_col] = original_unmatched
 
     if len(matched_chunk) > 0:
         matched_chunk.to_csv(
