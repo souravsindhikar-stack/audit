@@ -97,7 +97,7 @@ for i, chunk in enumerate(reader, start=1):
     mapped_chunk = chunk[mapped_output_mask].copy()
     unmatched_chunk = chunk[unmatched_mask].copy()
 
-    # For unmatched file, restore original source value so it shows what value failed to map
+    # For unmatched file: restore original Expedite_Supplier__c value, keep all other columns as-is
     if len(unmatched_chunk) > 0:
         unmatched_chunk = unmatched_chunk.reset_index(drop=True)
         original_unmatched = original_values[unmatched_mask].reset_index(drop=True)
