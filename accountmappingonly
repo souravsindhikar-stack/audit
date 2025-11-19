@@ -1,118 +1,172 @@
 import os
 import pandas as pd
 
-# ==== Column names (edit these when source/lookup changes) ====
-source_id_col = "AccountId"               # column in source CSV to map
-lookup_key_col = "Legacy_SF_Record_ID__c"  # column in lookup with legacy IDs
-lookup_value_col = "Id"                   # column in lookup with new IDs
+# ========= USER INPUTS =========
+SOURCE_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
+LOOKUP_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
+OUTPUT_DIR = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping"
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, "accountid_mapped.csv")
+UNMATCHED_FILE = os.path.join(OUTPUT_DIR, "no_match_accountid.csv")
+# Column names
+SOURCE_ID_COL = "AccountId"
+RECORDTYPE_COL = "Account.Recordtype.Name"
+BUSINESS_HOURS_COL = "BusinessHoursId"
+LOOKUP_KEY_COL = "Legacy_SF_Record_ID__c"
+LOOKUP_VALUE_COL = "Id"
+# ========= CONSTANTS =========
+ARROW_VERTICAL_ACCOUNT_ID = "001Wr00000mKja2IAC"
+UNITY_ACCOUNT_ID = "001Wr00000mKWszIAG"
+BUSINESS_HOURS_ID = "01mWr0000012RrmIAE"
+CHUNK_SIZE = 50_000
+# ========= END OF USER INPUTS =========
 
-# ==== File Paths ====
-source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
-lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
-output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping"
-output_file = os.path.join(output_dir, "accountid_mapped.csv")
-unmatched_file = os.path.join(output_dir, "no_match_accountid.csv")
 
-# ==== Create output directory ====
-os.makedirs(output_dir, exist_ok=True)
+def load_lookup(path, key_col, value_col):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Lookup file not found: {path}")
 
-# ==== Remove old outputs ====
-for path in (output_file, unmatched_file):
-    if os.path.exists(path):
-        os.remove(path)
-        print(f"⚠️ Removed existing file: {path}")
+    if path.lower().endswith((".xls", ".xlsx")):
+        lookup_df = pd.read_excel(path, dtype=str)
+    else:
+        lookup_df = pd.read_csv(path, dtype=str)
 
-# ==== Load lookup sheet ====
-print("📖 Loading lookup file...")
-if not os.path.exists(lookup_file):
-    raise FileNotFoundError(f"Lookup file not found: {lookup_file}")
+    lookup_df = lookup_df.fillna("")
+    missing = {key_col, value_col} - set(lookup_df.columns)
+    if missing:
+        raise ValueError(f"Missing column(s) in lookup file: {', '.join(missing)}")
 
-lookup_df = pd.read_excel(lookup_file, dtype=str).fillna("")
-required_cols = {lookup_key_col, lookup_value_col}
-missing = required_cols - set(lookup_df.columns)
-if missing:
-    raise ValueError(f"Missing column(s) in lookup file: {', '.join(missing)}")
+    for col in lookup_df.columns:
+        lookup_df[col] = lookup_df[col].astype(str).str.strip()
 
-for col in lookup_df.columns:
-    lookup_df[col] = lookup_df[col].astype(str).str.strip()
+    return {
+        str(k).strip().lower(): str(v).strip()
+        for k, v in zip(lookup_df[key_col], lookup_df[value_col])
+        if str(k).strip()
+    }
 
-dict_lookup = {
-    str(k).strip().lower(): str(v).strip()
-    for k, v in zip(lookup_df[lookup_key_col], lookup_df[lookup_value_col])
-    if str(k).strip()
-}
 
-# ==== Mapping helper ====
-def map_value(raw_value: str) -> str:
+def map_account_id(raw_value, lookup_dict):
     raw_value = (raw_value or "").strip()
     if not raw_value:
         return ""
-    return dict_lookup.get(raw_value.lower(), "")
+    return lookup_dict.get(raw_value.lower(), "")
 
-# ==== Process source CSV ====
-if not os.path.exists(source_file):
-    raise FileNotFoundError(f"Source file not found: {source_file}")
 
-chunk_size = 50_000
-reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    for path in (OUTPUT_FILE, UNMATCHED_FILE):
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"⚠️ Removed existing file: {path}")
 
-header_written_mapped = False
-header_written_unmatched = False
-total_rows = matched_count = unmatched_count = 0
+    if not os.path.exists(SOURCE_FILE):
+        raise FileNotFoundError(f"Source file not found: {SOURCE_FILE}")
 
-print("🔄 Processing source file in chunks...")
-for i, chunk in enumerate(reader, start=1):
-    chunk = chunk.fillna("")
+    print("📖 Loading lookup file...")
+    dict_lookup = load_lookup(LOOKUP_FILE, LOOKUP_KEY_COL, LOOKUP_VALUE_COL)
 
-    if source_id_col not in chunk.columns:
-        print(f"⚠️ Column '{source_id_col}' missing in chunk {i}, skipping...")
-        continue
+    reader = pd.read_csv(SOURCE_FILE, dtype=str, chunksize=CHUNK_SIZE)
+    header_written_mapped = False
+    header_written_unmatched = False
+    total_rows = mapped_count = unmatched_count = 0
 
-    original_values = chunk[source_id_col].copy()
-    chunk[source_id_col] = chunk[source_id_col].map(map_value)
+    print("🔄 Processing source file in chunks...")
+    for i, chunk in enumerate(reader, start=1):
+        chunk = chunk.fillna("")
 
-    original_stripped = original_values.astype(str).str.strip()
-    mapped_stripped = chunk[source_id_col].astype(str).str.strip()
+        if SOURCE_ID_COL not in chunk.columns:
+            print(f"⚠️ Column '{SOURCE_ID_COL}' missing in chunk {i}, skipping...")
+            continue
 
-    matched_mask = (original_stripped != "") & (mapped_stripped != "")
-    unmatched_mask = (original_stripped != "") & (mapped_stripped == "")
+        original_account_ids = chunk[SOURCE_ID_COL].copy()
 
-    matched_chunk = chunk[matched_mask].copy()
-    unmatched_chunk = chunk[unmatched_mask].copy()
-
-    if len(unmatched_chunk) > 0:
-        unmatched_chunk = unmatched_chunk.reset_index(drop=True)
-        original_unmatched = original_values[unmatched_mask].reset_index(drop=True)
-        unmatched_chunk[source_id_col] = original_unmatched
-
-    if len(matched_chunk) > 0:
-        matched_chunk.to_csv(
-            output_file,
-            index=False,
-            mode="a" if header_written_mapped else "w",
-            header=not header_written_mapped,
-            encoding="utf-8-sig",
+        # Step 1: Map AccountId using lookup
+        chunk[SOURCE_ID_COL] = chunk[SOURCE_ID_COL].apply(
+            lambda val: map_account_id(val, dict_lookup)
         )
-        header_written_mapped = True
-        matched_count += len(matched_chunk)
 
-    if len(unmatched_chunk) > 0:
-        unmatched_chunk.to_csv(
-            unmatched_file,
-            index=False,
-            mode="a" if header_written_unmatched else "w",
-            header=not header_written_unmatched,
-            encoding="utf-8-sig",
+        # Step 2: Override AccountId based on RecordType
+        if RECORDTYPE_COL in chunk.columns:
+            recordtype_values = chunk[RECORDTYPE_COL].astype(str).str.strip()
+            
+            # "Arrow / Verical" → set to ARROW_VERTICAL_ACCOUNT_ID
+            arrow_vertical_mask = recordtype_values == "Arrow / Verical"
+            chunk.loc[arrow_vertical_mask, SOURCE_ID_COL] = ARROW_VERTICAL_ACCOUNT_ID
+            
+            # "Unity" → set to UNITY_ACCOUNT_ID
+            unity_mask = recordtype_values == "Unity"
+            chunk.loc[unity_mask, SOURCE_ID_COL] = UNITY_ACCOUNT_ID
+
+        # Step 3: Set BusinessHoursId for all rows
+        if BUSINESS_HOURS_COL in chunk.columns:
+            chunk[BUSINESS_HOURS_COL] = BUSINESS_HOURS_ID
+        else:
+            chunk[BUSINESS_HOURS_COL] = BUSINESS_HOURS_ID
+
+        # Determine matched vs unmatched
+        original_stripped = original_account_ids.astype(str).str.strip()
+        mapped_stripped = chunk[SOURCE_ID_COL].astype(str).str.strip()
+
+        # Mapped output: includes matched rows AND originally blank rows
+        mapped_output_mask = (mapped_stripped != "") | (original_stripped == "")
+        
+        # Unmatched: only rows where original had value but mapping failed (before RecordType override)
+        # Check if original lookup failed (not overridden by RecordType)
+        temp_mapped = original_account_ids.apply(
+            lambda val: map_account_id(val, dict_lookup)
         )
-        header_written_unmatched = True
-        unmatched_count += len(unmatched_chunk)
+        temp_mapped_stripped = temp_mapped.astype(str).str.strip()
+        unmatched_mask = (original_stripped != "") & (temp_mapped_stripped == "")
+        
+        # Exclude rows that were overridden by RecordType from unmatched
+        if RECORDTYPE_COL in chunk.columns:
+            recordtype_values = chunk[RECORDTYPE_COL].astype(str).str.strip()
+            recordtype_override_mask = recordtype_values.isin(["Arrow / Verical", "Unity"])
+            unmatched_mask = unmatched_mask & ~recordtype_override_mask
 
-    total_rows += len(chunk)
-    print(
-        f"✅ Chunk {i}: {len(chunk)} rows | Matched: {len(matched_chunk)} | Unmatched: {len(unmatched_chunk)}"
-    )
+        mapped_chunk = chunk[mapped_output_mask].copy()
+        unmatched_chunk = chunk[unmatched_mask].copy()
 
-print("\n✅ Mapping completed!")
-print(f"📊 Total rows processed: {total_rows}")
-print(f"✅ Matched rows: {matched_count} → {output_file}")
-print(f"⚠️ Unmatched rows: {unmatched_count} → {unmatched_file}")
+        # For unmatched file: restore original AccountId but keep all other updates (BusinessHoursId, etc.)
+        if len(unmatched_chunk) > 0:
+            unmatched_chunk = unmatched_chunk.reset_index(drop=True)
+            original_unmatched = original_account_ids[unmatched_mask].reset_index(drop=True)
+            unmatched_chunk[SOURCE_ID_COL] = original_unmatched
+
+        # Write mapped output (includes matched + blanks)
+        if len(mapped_chunk) > 0:
+            mapped_chunk.to_csv(
+                OUTPUT_FILE,
+                index=False,
+                mode="a" if header_written_mapped else "w",
+                header=not header_written_mapped,
+                encoding="utf-8-sig",
+            )
+            header_written_mapped = True
+            mapped_count += len(mapped_chunk)
+
+        # Write unmatched file (only non-blank source values that failed to map)
+        if len(unmatched_chunk) > 0:
+            unmatched_chunk.to_csv(
+                UNMATCHED_FILE,
+                index=False,
+                mode="a" if header_written_unmatched else "w",
+                header=not header_written_unmatched,
+                encoding="utf-8-sig",
+            )
+            header_written_unmatched = True
+            unmatched_count += len(unmatched_chunk)
+
+        total_rows += len(chunk)
+        print(
+            f"✅ Chunk {i}: {len(chunk)} rows | Mapped output: {len(mapped_chunk)} | Unmatched: {len(unmatched_chunk)}"
+        )
+
+    print("\n✅ Mapping completed!")
+    print(f"📊 Total rows processed: {total_rows}")
+    print(f"✅ Mapped output rows (matched + blanks): {mapped_count} → {OUTPUT_FILE}")
+    print(f"⚠️ Unmatched rows: {unmatched_count} → {UNMATCHED_FILE}")
+
+
+if __name__ == "__main__":
+    main()
