@@ -1,0 +1,44 @@
+import os
+import pandas as pd
+
+# ========= USER INPUTS =========
+UNMATCHED_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_Status_Tracker\Mapped\Alliance 2\Alliance_Case_unmatched_combined.csv"
+MERGED_SOURCE_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\New folder\Alliance\merged_case_alliance_without_parent.csv"
+OUTPUT_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_Status_Tracker\Mapped\Alliance 2\Alliance_Case_unmatched_source_rows.csv"
+UNMATCHED_COLUMN = "Case__c"
+SOURCE_ID_COLUMN = "Id"
+# ========= END OF USER INPUTS =========
+
+
+def main():
+    if not os.path.exists(UNMATCHED_FILE):
+        raise FileNotFoundError(f"Unmatched file not found: {UNMATCHED_FILE}")
+    if not os.path.exists(MERGED_SOURCE_FILE):
+        raise FileNotFoundError(f"Merged source file not found: {MERGED_SOURCE_FILE}")
+
+    unmatched_df = pd.read_csv(UNMATCHED_FILE, dtype=str).fillna("")
+    source_df = pd.read_csv(MERGED_SOURCE_FILE, dtype=str).fillna("")
+
+    if UNMATCHED_COLUMN not in unmatched_df.columns:
+        raise ValueError(f"Column '{UNMATCHED_COLUMN}' missing from {UNMATCHED_FILE}")
+    if SOURCE_ID_COLUMN not in source_df.columns:
+        raise ValueError(f"Column '{SOURCE_ID_COLUMN}' missing from {MERGED_SOURCE_FILE}")
+
+    unmatched_ids = (
+        unmatched_df[UNMATCHED_COLUMN].astype(str).str.strip()
+    )
+    unmatched_ids = unmatched_ids[unmatched_ids != ""].drop_duplicates()
+
+    filtered = source_df[source_df[SOURCE_ID_COLUMN].isin(unmatched_ids)]
+
+    if len(filtered) == 0:
+        print("⚠️ No matching rows found; output will be empty.")
+    else:
+        print(f"✅ Found {len(filtered)} matching rows.")
+
+    filtered.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")
+    print(f"📁 Output written to: {OUTPUT_FILE}")
+
+
+if __name__ == "__main__":
+    main()
