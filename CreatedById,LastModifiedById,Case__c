@@ -3,18 +3,18 @@ import pandas as pd
 
 # ========= USER INPUTS =========
 # Source data (must contain CreatedById, LastModifiedById, Case__c)
-SOURCE_FILE = r"C:\path\to\source.csv"
+SOURCE_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Merge\merged_Alliance_case_tracker.csv"
 
 # Vlookup mapping (digital/merge lookups) for CreatedById & LastModifiedById
-USER_VLOOKUP_FILE = r"C:\path\to\user_vlookup.csv"
+USER_VLOOKUP_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Vlookup_mapping_file 5 2.csv"
 
 # Case legacy→new lookup (Excel or CSV)
-CASE_LOOKUP_FILE = r"C:\path\to\case_lookup.xlsx"  # accepts .xlsx or .csv
+CASE_LOOKUP_FILE = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_Status_Tracker\Lkp file\merged_Case_Status_Tracker_Lkp.csv"  # accepts .xlsx or .csv
 CASE_LOOKUP_KEY_COL = "Legacy_SF_Record_ID__c"
 CASE_LOOKUP_VALUE_COL = "Id"
 
 # Output locations
-OUTPUT_DIR = r"C:\path\to\output\folder"
+OUTPUT_DIR = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_Status_Tracker\Mapped"
 MAPPED_OUTPUT_FILE = os.path.join(OUTPUT_DIR, "UserMapping_WithCase.csv")
 CASE_UNMATCHED_FILE = os.path.join(OUTPUT_DIR, "Case_Unmatched.csv")
 
