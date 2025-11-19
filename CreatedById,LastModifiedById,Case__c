@@ -1,109 +1,174 @@
 import os
-
 import pandas as pd
 
-# ==== File Paths ====
-source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Alliance\Alliance_Parent_V1.csv"
+# ========= USER INPUTS =========
+# Source data (must contain CreatedById, LastModifiedById, Case__c)
+SOURCE_FILE = r"C:\path\to\source.csv"
 
-vlookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Vlookup_mapping_file 5 2.csv"
+# Vlookup mapping (digital/merge lookups) for CreatedById & LastModifiedById
+USER_VLOOKUP_FILE = r"C:\path\to\user_vlookup.csv"
 
-output_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Output 2 - Usermapping\With Parent\UserMapping-Alliance_Parent_V1.csv"
+# Case legacy→new lookup (Excel or CSV)
+CASE_LOOKUP_FILE = r"C:\path\to\case_lookup.xlsx"  # accepts .xlsx or .csv
+CASE_LOOKUP_KEY_COL = "Legacy_SF_Record_ID__c"
+CASE_LOOKUP_VALUE_COL = "Id"
 
-# ==== Remove previous output file if exists ====
-if os.path.exists(output_file):
-    os.remove(output_file)
-    print(f"⚠️ Existing output file removed: {output_file}")
+# Output locations
+OUTPUT_DIR = r"C:\path\to\output\folder"
+MAPPED_OUTPUT_FILE = os.path.join(OUTPUT_DIR, "UserMapping_WithCase.csv")
+CASE_UNMATCHED_FILE = os.path.join(OUTPUT_DIR, "Case_Unmatched.csv")
 
-# ==== Load Vlookup File ====
-vlookup_df = pd.read_csv(vlookup_file, dtype=str).fillna("")
+# ========= CONSTANTS =========
+DEFAULT_OWNER_ID = "005Wr00000ECxAjIAL"                # not used but kept for reference
+DEFAULT_CREATEDBY_LASTMODIFIED_ID = "005A0000000rXeVIAU"
+RECORD_TYPE_ID = "012Wr000001ezc5IAA"
+CHUNK_SIZE = 50_000
+# ========= END OF USER INPUTS =========
 
-# ==== Clean Whitespace ====
-for col in vlookup_df.columns:
-    vlookup_df[col] = vlookup_df[col].astype(str).str.strip()
 
-# ==== Build Lookup Dictionaries (Case-Insensitive) ====
-dict_b_to_c = {k.lower(): v for k, v in zip(vlookup_df["digital_prod_Id"], vlookup_df["digital_Global_ID__c"])}
+def load_case_lookup(path, key_col, value_col):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Case lookup file not found: {path}")
 
-dict_g_to_f = {k.lower(): v for k, v in zip(vlookup_df["merge_Global_ID__c"], vlookup_df["merge_Id"])}
+    if path.lower().endswith((".xls", ".xlsx")):
+        case_df = pd.read_excel(path, dtype=str)
+    else:
+        case_df = pd.read_csv(path, dtype=str)
+    case_df = case_df.fillna("")
 
-dict_email_name_to_f = {
-    (str(row["merge_email"]).lower(), str(row["merge_Name"]).lower()): row["merge_Id"]
-    for _, row in vlookup_df.iterrows()
-}
+    missing = {key_col, value_col} - set(case_df.columns)
+    if missing:
+        raise ValueError(f"Missing column(s) in case lookup: {', '.join(missing)}")
 
-dict_b_to_email_name = {
-    str(row["digital_prod_Id"]).lower(): (str(row["digital_Email"]).lower(), str(row["digital_Name"]).lower())
-    for _, row in vlookup_df.iterrows()
-}
+    for col in case_df.columns:
+        case_df[col] = case_df[col].astype(str).str.strip()
 
-# ==== Mapping Function ====
-def map_id(digital_prod_id):
-    if not digital_prod_id:
+    return {
+        str(k).lower(): str(v).strip()
+        for k, v in zip(case_df[key_col], case_df[value_col])
+        if str(k).strip()
+    }
+
+
+def map_user_id_factory(vlookup_df):
+    for col in vlookup_df.columns:
+        vlookup_df[col] = vlookup_df[col].astype(str).str.strip()
+
+    dict_b_to_c = {
+        str(k).lower(): str(v)
+        for k, v in zip(vlookup_df["digital_prod_Id"], vlookup_df["digital_Global_ID__c"])
+    }
+    dict_g_to_f = {
+        str(k).lower(): str(v)
+        for k, v in zip(vlookup_df["merge_Global_ID__c"], vlookup_df["merge_Id"])
+    }
+    dict_email_name_to_f = {
+        (str(row["merge_email"]).lower(), str(row["merge_Name"]).lower()): str(row["merge_Id"])
+        for _, row in vlookup_df.iterrows()
+    }
+    dict_b_to_email_name = {
+        str(row["digital_prod_Id"]).lower(): (
+            str(row["digital_Email"]).lower(),
+            str(row["digital_Name"]).lower(),
+        )
+        for _, row in vlookup_df.iterrows()
+    }
+
+    def map_id(digital_prod_id):
+        if not digital_prod_id:
+            return ""
+        digital_prod_id_lc = str(digital_prod_id).strip().lower()
+
+        digital_global_id = dict_b_to_c.get(digital_prod_id_lc, "").lower()
+        if digital_global_id and digital_global_id in dict_g_to_f:
+            return dict_g_to_f[digital_global_id]
+
+        email_name = dict_b_to_email_name.get(digital_prod_id_lc)
+        if email_name:
+            email_name_lc = (email_name[0].lower(), email_name[1].lower())
+            return dict_email_name_to_f.get(email_name_lc, "")
+
         return ""
 
-    digital_prod_id_lc = str(digital_prod_id).strip().lower()
+    return map_id
 
-    # Check global ID mapping
-    digital_global_id = dict_b_to_c.get(digital_prod_id_lc, "").lower()
-    if digital_global_id and digital_global_id in dict_g_to_f:
-        return dict_g_to_f[digital_global_id]
 
-    # Check email + name mapping
-    email_name = dict_b_to_email_name.get(digital_prod_id_lc)
-    if email_name:
-        email_name_lc = (email_name[0].lower(), email_name[1].lower())
-        return dict_email_name_to_f.get(email_name_lc, "")
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    for path in (MAPPED_OUTPUT_FILE, CASE_UNMATCHED_FILE):
+        if os.path.exists(path):
+            os.remove(path)
 
-    return ""
+    if not os.path.exists(SOURCE_FILE):
+        raise FileNotFoundError(f"Source file not found: {SOURCE_FILE}")
 
-# ==== Default Values ====
-DEFAULT_OWNER_ID = "005Wr00000ECxAjIAL"
-DEFAULT_CREATEDBY_LASTMODIFIED_ID = "005A0000000rXeVIAU"
+    user_vlookup_df = pd.read_csv(USER_VLOOKUP_FILE, dtype=str).fillna("")
+    map_user_id = map_user_id_factory(user_vlookup_df)
 
-# ==== Process Source File in Chunks ====
-chunk_size = 50000
-reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
-header_written = False
-total_rows = 0
+    dict_case_lookup = load_case_lookup(
+        CASE_LOOKUP_FILE, CASE_LOOKUP_KEY_COL, CASE_LOOKUP_VALUE_COL
+    )
 
-for i, chunk in enumerate(reader, start=1):
-    chunk = chunk.fillna("")
+    reader = pd.read_csv(SOURCE_FILE, dtype=str, chunksize=CHUNK_SIZE)
+    header_written_main = False
+    header_written_unmatched = False
+    total_rows = case_unmatched_count = 0
 
-    # Columns to map
-    columns_to_map = ["OwnerId", "CreatedById", "LastModifiedById"]
+    for chunk_idx, chunk in enumerate(reader, start=1):
+        chunk = chunk.fillna("")
+        case_original = chunk.get("Case__c", pd.Series([""] * len(chunk)))
+        created_original = chunk.get("CreatedById", pd.Series([""] * len(chunk)))
+        modified_original = chunk.get("LastModifiedById", pd.Series([""] * len(chunk)))
 
-    # Replace original columns with mapped values and fill defaults
-    for col in columns_to_map:
-        if col in chunk.columns:
-            # Store original values to check if source has value
-            original_values = chunk[col].copy()
-            
-            # Replace original column with mapped values
-            chunk[col] = chunk[col].map(map_id)
-            
-            # Fill default values: only if source has value but mapping is empty
-            if col == "OwnerId":
-                # For OwnerId: fill with default if source has value but mapping is empty
-                mask = (original_values.astype(str).str.strip() != "") & (chunk[col].astype(str).str.strip() == "")
-                chunk.loc[mask, col] = DEFAULT_OWNER_ID
-            elif col in ["CreatedById", "LastModifiedById"]:
-                # For CreatedById and LastModifiedById: fill with default if source has value but mapping is empty
-                mask = (original_values.astype(str).str.strip() != "") & (chunk[col].astype(str).str.strip() == "")
-                chunk.loc[mask, col] = DEFAULT_CREATEDBY_LASTMODIFIED_ID
-        else:
-            print(f"⚠️ Column '{col}' not found in chunk {i}, skipping...")
+        if "CreatedById" in chunk.columns:
+            chunk["CreatedById"] = chunk["CreatedById"].map(map_user_id)
+            mask = chunk["CreatedById"].astype(str).str.strip() == ""
+            chunk.loc[mask, "CreatedById"] = DEFAULT_CREATEDBY_LASTMODIFIED_ID
 
-    # Write to output file
-    if not header_written:
-        # First chunk: write mode with header
-        chunk.to_csv(output_file, index=False, mode="w", header=True, encoding="utf-8-sig")
-        header_written = True
-    else:
-        # Subsequent chunks: append mode without header
-        chunk.to_csv(output_file, index=False, mode="a", header=False, encoding="utf-8-sig")
+        if "LastModifiedById" in chunk.columns:
+            chunk["LastModifiedById"] = chunk["LastModifiedById"].map(map_user_id)
+            mask = chunk["LastModifiedById"].astype(str).str.strip() == ""
+            chunk.loc[mask, "LastModifiedById"] = DEFAULT_CREATEDBY_LASTMODIFIED_ID
 
-    total_rows += len(chunk)
-    print(f"✅ Processed chunk {i} ({len(chunk)} rows)")
+        if "Case__c" in chunk.columns:
+            chunk["Case__c"] = chunk["Case__c"].apply(
+                lambda val: dict_case_lookup.get(str(val).strip().lower(), "") if str(val).strip() else ""
+            )
+            case_mapped = chunk["Case__c"].astype(str).str.strip()
+            case_orig_stripped = case_original.astype(str).str.strip()
+            unmatched_mask = (case_orig_stripped != "") & (case_mapped == "")
+            case_unmatched = chunk[unmatched_mask].copy()
 
-print(f"✅ Mapping completed successfully. Output saved to: {output_file}")
-print(f"📊 Total rows processed: {total_rows}")
+            if len(case_unmatched) > 0:
+                case_unmatched["Case__c"] = case_original[unmatched_mask].values
+                case_unmatched.to_csv(
+                    CASE_UNMATCHED_FILE,
+                    index=False,
+                    mode="a" if header_written_unmatched else "w",
+                    header=not header_written_unmatched,
+                    encoding="utf-8-sig",
+                )
+                header_written_unmatched = True
+                case_unmatched_count += len(case_unmatched)
+
+        chunk["RecordTypeId"] = RECORD_TYPE_ID
+
+        chunk.to_csv(
+            MAPPED_OUTPUT_FILE,
+            index=False,
+            mode="a" if header_written_main else "w",
+            header=not header_written_main,
+            encoding="utf-8-sig",
+        )
+        header_written_main = True
+        total_rows += len(chunk)
+        print(f"✅ Chunk {chunk_idx}: {len(chunk)} rows processed")
+
+    print("\n✅ Completed")
+    print(f"📊 Total rows processed: {total_rows}")
+    print(f"📝 Output file: {MAPPED_OUTPUT_FILE}")
+    print(f"⚠️ Case unmatched rows: {case_unmatched_count} → {CASE_UNMATCHED_FILE}")
+
+
+if __name__ == "__main__":
+    main()
