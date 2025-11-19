@@ -1,0 +1,138 @@
+import os
+import pandas as pd
+
+# ==== Column names (edit these when source/lookup changes) ====
+source_id_col = "ParentId"                            # column in source CSV to map
+lookup_key_col = "Legacy_SF_Record_ID__c"            # column in lookup with legacy IDs
+lookup_value_col = "Id"                              # column in lookup with new IDs
+
+# ==== File Paths ====
+source_file = r"C:\Users\Sourav.Sindhikar\Downloads\Missed_Case_Alliance_Parent_V1.csv"
+lookup_file = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Case_alliance_accountLKP.xlsx"
+output_dir = r"C:\Users\Sourav.Sindhikar\Downloads\Mapping\Acount_mapping\Alliance\With_parent\Missed_count\Missed_V2"
+output_file = os.path.join(output_dir, "ParentId_mapped.csv")
+unmatched_file = os.path.join(output_dir, "no_match_ParentId.csv")
+
+# ==== Create output directory ====
+os.makedirs(output_dir, exist_ok=True)
+
+# ==== Remove old outputs ====
+for path in (output_file, unmatched_file):
+    if os.path.exists(path):
+        os.remove(path)
+        print(f"⚠️ Removed existing file: {path}")
+
+# ==== Load lookup sheet ====
+print("📖 Loading lookup file...")
+if not os.path.exists(lookup_file):
+    raise FileNotFoundError(f"Lookup file not found: {lookup_file}")
+
+lookup_df = pd.read_excel(lookup_file, dtype=str).fillna("")
+required_cols = {lookup_key_col, lookup_value_col}
+missing = required_cols - set(lookup_df.columns)
+if missing:
+    raise ValueError(f"Missing column(s) in lookup file: {', '.join(missing)}")
+
+# normalize lookup columns
+for col in lookup_df.columns:
+    lookup_df[col] = lookup_df[col].astype(str).str.strip()
+
+# build dictionary lookup: lowercased keys -> value (keep values as-is)
+dict_lookup = {
+    str(k).strip().lower(): str(v).strip()
+    for k, v in zip(lookup_df[lookup_key_col], lookup_df[lookup_value_col])
+    if str(k).strip()
+}
+
+# ==== Mapping helper ====
+def map_value(raw_value: str) -> str:
+    """
+    Return mapped ID if found.
+    - If raw_value is blank/None -> return "" (keep blank in mapped output)
+    - If raw_value non-blank and present in dict_lookup -> return mapped value
+    - Otherwise -> return "" (indicates no mapping found)
+    """
+    raw_value = (raw_value or "").strip()
+    if not raw_value:
+        return ""
+    return dict_lookup.get(raw_value.lower(), "")
+
+# ==== Process source CSV ====
+if not os.path.exists(source_file):
+    raise FileNotFoundError(f"Source file not found: {source_file}")
+
+chunk_size = 50_000
+reader = pd.read_csv(source_file, dtype=str, chunksize=chunk_size)
+
+header_written_mapped = False
+header_written_unmatched = False
+total_rows = mapped_out_count = unmatched_count = 0
+
+print("🔄 Processing source file in chunks...")
+for i, chunk in enumerate(reader, start=1):
+    # fill NaN with empty string so we can strip safely
+    chunk = chunk.fillna("")
+
+    if source_id_col not in chunk.columns:
+        print(f"⚠️ Column '{source_id_col}' missing in chunk {i}, skipping...")
+        continue
+
+    # keep original values for decision making and for restoring in unmatched file
+    original_values = chunk[source_id_col].copy()
+
+    # replace source column with mapped values (blanks remain blank)
+    chunk[source_id_col] = chunk[source_id_col].map(map_value)
+
+    original_stripped = original_values.astype(str).str.strip()
+    mapped_stripped = chunk[source_id_col].astype(str).str.strip()
+
+    # mapped output mask:
+    # - include rows where mapping exists (mapped_stripped != "")
+    # - OR include rows where original source value was blank (original_stripped == "")
+    mapped_output_mask = (mapped_stripped != "") | (original_stripped == "")
+
+    # unmatched mask: original was non-blank but mapping was not found
+    unmatched_mask = (original_stripped != "") & (mapped_stripped == "")
+
+    mapped_chunk = chunk[mapped_output_mask].copy()
+    unmatched_chunk = chunk[unmatched_mask].copy()
+
+    # For unmatched file: restore original ParentId value, keep all other columns as-is
+    if len(unmatched_chunk) > 0:
+        unmatched_chunk = unmatched_chunk.reset_index(drop=True)
+        original_unmatched = original_values[unmatched_mask].reset_index(drop=True)
+        unmatched_chunk[source_id_col] = original_unmatched
+
+    # Write mapped output (includes mapped IDs and original blanks)
+    if len(mapped_chunk) > 0:
+        mapped_chunk.to_csv(
+            output_file,
+            index=False,
+            mode="a" if header_written_mapped else "w",
+            header=not header_written_mapped,
+            encoding="utf-8-sig",
+        )
+        header_written_mapped = True
+        mapped_out_count += len(mapped_chunk)
+
+    # Write unmatched file (original non-blank values that had no mapping)
+    if len(unmatched_chunk) > 0:
+        unmatched_chunk.to_csv(
+            unmatched_file,
+            index=False,
+            mode="a" if header_written_unmatched else "w",
+            header=not header_written_unmatched,
+            encoding="utf-8-sig",
+        )
+        header_written_unmatched = True
+        unmatched_count += len(unmatched_chunk)
+
+    total_rows += len(chunk)
+    print(
+        f"✅ Chunk {i}: {len(chunk)} rows | Mapped-output rows: {len(mapped_chunk)} | Unmatched: {len(unmatched_chunk)}"
+    )
+
+print("\n✅ Mapping completed!")
+print(f"📊 Total rows processed: {total_rows}")
+print(f"✅ Rows written to mapped output (including blanks): {mapped_out_count} → {output_file}")
+print(f"⚠️ Unmatched rows (original non-blank but no mapping): {unmatched_count} → {unmatched_file}")
