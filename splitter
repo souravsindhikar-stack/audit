@@ -1,0 +1,43 @@
+import os
+import re
+
+import pandas as pd
+
+# ========= USER INPUTS =========
+MERGED_FILE = r"C:\path\to\Merged_UserMapping_WithCase.csv"
+OUTPUT_DIR = r"C:\path\to\split_output"
+FILE_NAME_COLUMN = "File_Name"
+OUTPUT_ENCODING = "utf-8-sig"
+# ========= END OF USER INPUTS =========
+
+
+def sanitize_filename(value: str) -> str:
+    """Return a filesystem-safe filename derived from value."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", value.strip())
+    return cleaned or "UNKNOWN"
+
+
+def split_by_file_name():
+    if not os.path.exists(MERGED_FILE):
+        raise FileNotFoundError(f"Merged file not found: {MERGED_FILE}")
+
+    df = pd.read_csv(MERGED_FILE, dtype=str).fillna("")
+
+    if FILE_NAME_COLUMN not in df.columns:
+        raise ValueError(f"Column '{FILE_NAME_COLUMN}' not found in merged file.")
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    for file_name, group in df.groupby(FILE_NAME_COLUMN):
+        sanitized = sanitize_filename(str(file_name))
+        out_path = os.path.join(OUTPUT_DIR, f"{sanitized}.csv")
+        group = group.drop(columns=[FILE_NAME_COLUMN])
+        group.to_csv(out_path, index=False, encoding=OUTPUT_ENCODING)
+        print(f"✅ Wrote {len(group)} rows to {out_path}")
+
+    print("🎉 Split complete.")
+
+
+if __name__ == "__main__":
+    split_by_file_name()
+
